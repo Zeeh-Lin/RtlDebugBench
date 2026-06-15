@@ -1,0 +1,29 @@
+lowRISC/ibex:
+  url: https://github.com/lowRISC/ibex.git
+  doc_dirs:
+    - doc
+  rtl_dir: rtl
+  rtl_extensions:
+    - .sv
+    - .svh
+    - .v
+
+chipsalliance/caliptra-rtl:
+  url: https://github.com/chipsalliance/caliptra-rtl.git
+  doc_dirs:
+    - docs
+  rtl_dir: src
+  rtl_extensions:
+    - .sv
+    - .svh
+    - .v
+
+openhwgroup/cva6:
+  url: https://github.com/openhwgroup/cva6.git
+  doc_dirs:
+    - docs
+  rtl_dir: core
+  rtl_extensions:
+    - .sv
+    - .svh
+    - .v
