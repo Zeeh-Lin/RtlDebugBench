@@ -1,1 +1,1 @@
-"""RtlDebugBench S1 data collection pipeline."""
+"""RtlDebugBench S1: PR data collection and coarse filtering."""

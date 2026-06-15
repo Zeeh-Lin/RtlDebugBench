@@ -103,15 +103,25 @@ input: {
 
 # 构建流程（Repo PR采集\&筛选）@林子涵
 
-- **S1 数据采集**：从目标仓库（如 lowRISC/ibex）通过 GitHub API 拉取已合并的 bug 修复 PR（确认close \&\& merge）
+- **S1 数据采集与粗筛**：从目标仓库（如 lowRISC/ibex）通过 GitHub API 拉取已合并的 bug 修复 PR，并过滤为“仅修改单个 RTL 文件”的候选集。
 
-    1. LLM judge title\\body
+    S1 复用 hwe-bench 的采集逻辑，拆为 6 个子步骤，中间产物以 JSONL 持久化，支持断点续跑：
 
-    2. 含PR ID、PR title、PR body, 关联issue的title\&body，commit修改的文件列表、修复前的commit Id，完整 unified diff（以上Jsonl格式存储）
+    1. **S1.1 拉取所有 PR**：通过 GitHub API 拉取目标仓库的全部 PR，并为每个 PR 拉取其 commit 列表。输出 `s01_01_prs.jsonl`。
+    2. **S1.2 按 issue 过滤**：用 LLM 从 PR title、PR body 以及所有 commit messages 中提取关联 issue 号；仅保留已合并（closed && merged_at 非空）且成功解析出 issue 号的 PR。输出 `s01_02_issue_linked_prs.jsonl`。
+    3. **S1.3 拉取 issue 详情**：根据 S1.2 得到的 issue 号列表，拉取每个 issue 的 title 和 body。输出 `s01_03_issues.jsonl`。
+    4. **S1.4 合并 PR 与 issue 数据**：将 S1.2 的 PR 记录与 S1.3 的 issue 记录按 issue 号合并。输出 `s01_04_merged_prs.jsonl`。
+    5. **S1.5 抽取 patch**：通过 GitHub compare API 获取 base commit 到 head commit 的完整 unified diff，并按文件路径拆分为 `fix_patch`（非测试文件）和 `test_patch`（测试相关文件）。输出 `s01_05_patches.jsonl`。
+    6. **S1.6 patch 粗筛与单 RTL 文件过滤**：仅保留 `fix_patch` 中恰好修改了 1 个 RTL 文件（`.v` / `.sv` / `.svh`）的 PR；单个文件修改长度不限；丢弃测试目录、markdown、多 RTL 文件修改等。输出 `s01_06_single_rtl_candidates.jsonl`。
 
-    - @林子涵形成脚本代码放github上，贴上链接
+    脚本位置：`src/s1_collection/`，包含 `s1_01_fetch_prs.py` ~ `s1_06_filter_patches.py` 及 `s1_pipeline.py` orchestrator。
 
-        - 筛选，去掉tb   dv文件夹  markdown文件
+    环境依赖：`PyGithub`、`unidiff`、`requests`、`tqdm`、`openai`；密钥 `GITHUB_TOKEN` 与 `DEEPSEEK_API_KEY`。
+
+    S1 输出字段说明：
+    - 进入最终 `input` 包的字段：`repo`、`pr_id`、`lang`、`rtl_files`、`commit_id`（base commit SHA）、`timestamp`（`merged_at`）。
+    - 供 S2/S3 使用的辅助证据字段：`pr_title`、`pr_body`、`issue_title`、`issue_body`、`commit_message`、`fix_patch`、`test_patch`、`modified_files`、`lines_added`/`lines_removed`。
+    - S1 内部字段：`commits` 列表（仅用于 S1.2 issue 提取）。
 
 - **S****2**** 输入包构造**
 

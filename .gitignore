@@ -1,0 +1,27 @@
+# Secrets and environment variables
+.env
+*.env
+deepseek-api.txt
+github-personal-access-token.txt
+token
+tokens
+token.txt
+tokens.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+.claude
+docs
+logs
+ref
+BenchmarkInfo.md
+
+datasets/
+!datasets/collect/chipsalliance/chipsalliance__caliptra-rtl_s01_06_single_rtl_candidates.jsonl
+!datasets/collect/lowRISC/lowRISC__ibex_s01_06_single_rtl_candidates.jsonl
+!datasets/collect/openhwgroup/openhwgroup__cva6_s01_06_single_rtl_candidates.jsonl
