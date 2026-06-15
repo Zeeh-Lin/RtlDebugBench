@@ -116,6 +116,7 @@ def process_pr(pr_data: dict) -> dict | None:
         # B. Auxiliary evidence for S2/S3
         "pr_title": pr_data.get("title", "") or "",
         "pr_body": pr_data.get("body", "") or "",
+        "merge_commit_sha": pr_data.get("merge_commit_sha", "") or "",
         "issue_title": issue_title,
         "issue_body": issue_body,
         "commit_message": _commit_message(pr_data.get("commits", [])),
