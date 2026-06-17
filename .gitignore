@@ -22,6 +22,3 @@ ref
 BenchmarkInfo.md
 
 datasets/
-!datasets/collect/chipsalliance/chipsalliance__caliptra-rtl_s01_06_single_rtl_candidates.jsonl
-!datasets/collect/lowRISC/lowRISC__ibex_s01_06_single_rtl_candidates.jsonl
-!datasets/collect/openhwgroup/openhwgroup__cva6_s01_06_single_rtl_candidates.jsonl

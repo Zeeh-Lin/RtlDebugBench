@@ -1,8 +1,8 @@
-# BenchmarkInfo
-
+# Benchmark信息
 输入\&输出格式
 
 > **以josnl文件组织，每一行是一个json （参考下HWE\-bench格式）**
+> 
 > 
 
 
@@ -11,6 +11,7 @@
 {
     input: {},
     bug_info: [],
+    aux: {}   // S2/S3 辅助字段，非评测必填
 }
 ```
 
@@ -47,7 +48,7 @@ input: {
 ```JSON
 // 暂时先考虑单文件情况，多文件可用二维列表
 // 以下是单文件，1或多个Bug
-"bug_info": [[
+"bug_info": [
   // 单文件中 bug 1
   {
     "bug_lineno": [
@@ -77,15 +78,15 @@ input: {
   *...*
   *...*
   *...*
-]]
+]
 ```
 
 
 
-示例：@李林轩
+示例：
 
 ```JSON
-"bug_info": [[
+"bug_info": [
   {
     "bug_lineno": [
       407,
@@ -98,36 +99,33 @@ input: {
     "bug_desc": "The DMA controller can decide that a transfer is complete before the AES FSM has reached a terminal or inactive state. This is exposed by a 1 DWORD DMA/AES transfer, where byte-transfer bookkeeping can finish before AES has completed, causing the DMA FSM to move to DONE too early.",
     "fix_hint": "Require the DMA completion predicate to also confirm that the AES FSM is idle, done, or in error before allowing the DMA FSM to treat all bytes as transferred."
   }
-]]
+]
 ```
 
-# 构建流程（Repo PR采集\&筛选）@林子涵
+# 构建流程（Repo PR采集\&筛选）
 
-- **S1 数据采集与粗筛**：从目标仓库（如 lowRISC/ibex）通过 GitHub API 拉取已合并的 bug 修复 PR，并过滤为“仅修改单个 RTL 文件”的候选集。
+- **S1 数据采集**：从目标仓库（如 lowRISC/ibex）通过 GitHub API 拉取已合并的 bug 修复 PR，并过滤为「仅修改单个RTL文件」的候选集。分为以下几个子步骤：
 
-    S1 复用 hwe-bench 的采集逻辑，拆为 6 个子步骤，中间产物以 JSONL 持久化，支持断点续跑：
+    1. **S1\.1 拉取所有 PR**：通过 GitHub API 拉取目标仓库的全部 PR，并为每个 PR 拉取其 commit 列表。输出 `s01_01_prs.jsonl`。
 
-    1. **S1.1 拉取所有 PR**：通过 GitHub API 拉取目标仓库的全部 PR，并为每个 PR 拉取其 commit 列表。输出 `s01_01_prs.jsonl`。
-    2. **S1.2 按 issue 过滤**：用 LLM 从 PR title、PR body 以及所有 commit messages 中提取关联 issue 号；仅保留已合并（closed && merged_at 非空）且成功解析出 issue 号的 PR。输出 `s01_02_issue_linked_prs.jsonl`。
-    3. **S1.3 拉取 issue 详情**：根据 S1.2 得到的 issue 号列表，拉取每个 issue 的 title 和 body。输出 `s01_03_issues.jsonl`。
-    4. **S1.4 合并 PR 与 issue 数据**：将 S1.2 的 PR 记录与 S1.3 的 issue 记录按 issue 号合并。输出 `s01_04_merged_prs.jsonl`。
-    5. **S1.5 抽取 patch**：通过 GitHub compare API 获取 base commit 到 head commit 的完整 unified diff，并按文件路径拆分为 `fix_patch`（非测试文件）和 `test_patch`（测试相关文件）。输出 `s01_05_patches.jsonl`。
-    6. **S1.6 patch 粗筛与单 RTL 文件过滤**：仅保留 `fix_patch` 中恰好修改了 1 个 RTL 文件（`.v` / `.sv` / `.svh`）的 PR；单个文件修改长度不限；丢弃测试目录、markdown、多 RTL 文件修改等。输出 `s01_06_single_rtl_candidates.jsonl`。
+    2. **S1\.2 按 issue 过滤**：用 LLM 从 PR title、PR body 以及所有 commit messages 中提取关联 issue 号；仅保留已合并（closed \&\& merged\_at 非空）且成功解析出 issue 号的 PR。输出 `s01_02_issue_linked_prs.jsonl`。
 
-    脚本位置：`src/s1_collection/`，包含 `s1_01_fetch_prs.py` ~ `s1_06_filter_patches.py` 及 `s1_pipeline.py` orchestrator。
+    3. **S1\.3 拉取 issue 详情**：根据 S1\.2 得到的 issue 号列表，拉取每个 issue 的 title 和 body。输出 `s01_03_issues.jsonl`。
 
-    环境依赖：`PyGithub`、`unidiff`、`requests`、`tqdm`、`openai`；密钥 `GITHUB_TOKEN` 与 `DEEPSEEK_API_KEY`。
+    4. **S1\.4 合并 PR 与 issue 数据**：将 S1\.2 的 PR 记录与 S1\.3 的 issue 记录按 issue 号合并。输出 `s01_04_merged_prs.jsonl`。
 
-    S1 输出字段说明：
-    - 进入最终 `input` 包的字段：`repo`、`pr_id`、`lang`、`rtl_files`、`commit_id`（base commit SHA）、`timestamp`（`merged_at`）。
-    - 供 S2/S3 使用的辅助证据字段：`pr_title`、`pr_body`、`issue_title`、`issue_body`、`commit_message`、`fix_patch`、`test_patch`、`modified_files`、`lines_added`/`lines_removed`。
-    - S1 内部字段：`commits` 列表（仅用于 S1.2 issue 提取）。
+    5. **S1\.5 抽取 patch**：通过 GitHub compare API 获取 base commit 到 head commit 的完整 unified diff，并按文件路径拆分为 `fix_patch`（非测试文件）和 `test_patch`（测试相关文件）。输出 `s01_05_patches.jsonl`。（以上HWE流程）
 
-- **S****2**** 输入包构造**
+    6. **S1\.6 patch 粗筛与单 RTL 文件过滤**：仅保留 `fix_patch` 中恰好修改了 1 个 RTL 文件（`.v` / `.sv` / `.svh`）的 PR；单个文件修改长度不限；丢弃测试目录、markdown、多 RTL 文件修改等。输出 `s01_06_single_rtl_candidates.jsonl`。输出除 input 所需字段外，还保留 `merge_commit_sha`、PR title/body、issue title/body、commit message、`fix_patch`、`test_patch` 等辅助字段，供 S2/S3 使用。
 
-    - repo，pr\_id，lang（按文件后缀名）, rtl\_files，commit\_id，timestamp：这些可以根据PR信息直接确定，属于meta data
+    - 仓库链接：https://github\.com/Zeeh\-Lin/RtlDebugBench
 
-    - **spec：需要LLM来生成，后面章节会讲具体方法。**
+- **S****2**** 输入包构造**：基于 S1\.6 候选，生成每个 PR 的 input 字段与辅助字段。
+
+    - repo、pr\_id、lang、rtl\_files、commit\_id、timestamp 等字段直接取自 PR metadata；其中 `commit_id` 指向 buggy base commit，`merge_commit_sha` 指向修复后的 merge commit。
+    - spec 由 LLM 从修复后的 RTL 源码和官方文档生成，经审查后写入 input。
+    - 未通过审查的 spec 进入人工审查队列，由人工决定修改或丢弃。
+    - 最终输出 `s02_inputs.jsonl`，每行包含 `input`、`bug_info`（S2 阶段为空列表）以及 `aux` 辅助字段。
 
 - **S****3**** 输出包构造****\(****bug\_lineno、bug\_type、****bug\_desc、fix\_hint ****\)**：
 
@@ -135,75 +133,124 @@ input: {
 
     - **bug\_type、bug\_desc、fix\_hint：需要LLM来生成，后面章节会讲具体方法。**
 
-# 输入字段构建@林子涵
+# 输入字段构建
 
 ## Spec 生成
 
-**Spec 是模块功能规格描述，作为 LLM 审查代码的基准**** ****——**** ****LLM 需对照 spec 检查 RTL 代码行为是否一致。**
+Spec 是模块功能规格描述，作为 LLM 审查代码的基准。LLM 需对照 spec 检查 RTL 代码行为是否一致。Spec 只描述**正确行为应该是什么**（WHAT），不描述实现方式（HOW），不泄露 bug 位置。
 
-spec 描述**正确行为应该是什么**（WHAT），不描述实现方式（HOW），不泄露 bug 位置。
+生成 Spec 需满足以下原则：
 
-|生成原则|说明|
-|---|---|
-|行为级描述|描述可观测的正确行为，不描述内部实现|
-|自包含|不熟悉该项目的工程师阅读后应能理解模块应该做什么|
-|防泄露|不提及信号名、行号、代码结构、修复方法、测试方法|
+- **行为级描述**：只描述可观测的正确行为，不描述内部实现。
+- **自包含**：不熟悉该项目的工程师阅读后应能理解模块应该做什么。
+- **防泄露**：不提及信号名、行号、代码结构、修复方法、测试方法。
 
-### 策略
+### S2 Pipeline
 
-**反推/生成**** \+ 审查**（两步走）：
+S2 将 S1.6 的每个候选 PR 转换为完整的输入包，分为四个子步骤：
 
-1. **Generate**：LLM 读取修复后的完整的RTL文件 \+ 官方文档的spec，LLM生成spec行为规格
+1. **s2_01_fetch_materials**：本地 clone 仓库，checkout 到 `merge_commit_sha`，读取修复后的 RTL 源码和官方文档目录。
+2. **s2_02_select_docs**：解析每篇文档标题生成 TOC，用 LLM 从 TOC 中预筛选与当前 RTL 模块相关的文档。
+3. **s2_03_generate_spec**：用修复后的 RTL 源码 + 选中的官方文档生成 spec，生成阶段不引入 PR title/body/issue/commit message 等可能泄露 bug/fix 的信息。
+4. **s2_04_review_spec**：用 PR 证据和 `fix_patch` 审查生成的 spec；通过则进入 `s02_inputs.jsonl`，未通过则进入 `manual_review_queue.jsonl` 由人工处理。
 
-    1. 修复后的完整的RTL文件
+### 官方文档获取
 
-    2. 官方文档的spec
+目标仓库都有官方文档目录：
 
-        1. 例如：https://github\.com/chipsalliance/caliptra\-rtl/blob/main/docs/CaliptraIntegrationSpecification\.md、https://github\.com/lowRISC/ibex/blob/master/doc/01\_overview/compliance\.rst
+- `lowRISC/ibex`：`doc/`
+- `chipsalliance/caliptra-rtl`：`docs/`
+- `openhwgroup/cva6`：`docs/`
 
-        2. 目前我们关心的三个repo有官方文档，可以通过**repo\-specific的方法**去提取和**当前RTL文件**最相关的文档部分@林子涵如何提取，构建一个标准的RAG？query如何设计（fix之后的代码\+PR title\&body\+patch）
+S2 采用 repo-specific 配置指定文档目录和 RTL 目录，脚本本地 clone 后按配置读取。如果某个 PR 未筛选出相关文档，官方 spec 部分留空，spec 生成仍基于修复后的 RTL 继续进行。
 
-        3. **如果没有官方文档，在prompt层面上这一部分为空即可**
-
-2. **Review**：第二个 LLM 检查 spec 是否泄露实现细节（信号名、行号、fix 方法、patch 片段），通过则采纳，否则**人工修改spec描述（如果人工也不太好改，直接丢掉）**。
-
-### Spec 格式
-
-"spec"字段为纯 Markdown 文本，结构如下： @林子涵建议不过于限制格式，这个不是关键创新点，设计过多（且不确定是否合理）容易引发质疑，直接LLM按照一定原则生成free\-format的就行
+### 文档预筛选Prompt
 
 ```Markdown
-# <module_name>
+You are an RTL documentation matching assistant.
 
-## Overview
-<1-3 sentences describing module purpose and system role>
+## RTL Module
+Repository: {repo}
+RTL File: {rtl_file}
 
-## Functional Behavior
-- <behavioral assertion 1: concrete and judgeable>
-- <behavioral assertion 2>
-- ...
-
-## Interface Constraints (optional)
-- <protocol requirements or interface-level constraints>
+```systemverilog
+{fixed_rtl_code}
 ```
+
+## Available Official Documents
+{doc_toc}
+
+## Task
+Select the official documents most relevant to the RTL module above.
+Prefer documents whose content would help write a behavioral spec for this module.
+If no document is relevant, return an empty list.
+
+## Output
+Output valid JSON only:
+{
+  "selected_doc_paths": ["doc/03_reference/pmp.rst"],
+  "reason": "one sentence explanation"
+}
+```
+
+### 生成策略
+
+生成阶段输入材料包括：
+
+- 修复后的完整 RTL 文件（来自 `merge_commit_sha`）。
+- 选中的官方文档全文（来自 s2_02_select_docs；若未选中则为空）。
+
+不引入 PR title/body/issue/commit message，避免 bug/fix 细节泄露到 spec 中。
 
 ### 生成流程（伪代码）
 
 ```Python
-def generate_spec(input: dict) -> dict:
-    """
-    主入口：读取原始材料，调用 LLM 生成 spec，审查后返回。
-    代码层无分支，由 LLM 根据材料自行选择 Tier 策略。
-    """
-    materials = load_materials(input)
+def build_s2_input(pr_record: dict) -> dict:
+    materials = fetch_materials(pr_record)          # s2_01
+    selected_docs = select_docs(materials)          # s2_02
+    spec_text = generate_spec(materials, selected_docs)  # s2_03
+    review = review_spec(spec_text, materials)      # s2_04
 
-    prompt = build_generation_prompt(input, materials)
-    spec_text = call_llm(prompt, temperature=0)
+    if not review["passed"]:
+        write_manual_review_queue(pr_record, spec_text, review)
+        return None
 
-    if not review_spec(spec_text, materials["patch"]):
-        spec_text = fix_with_feedback(spec_text, materials)
-
-    return {**input, "spec": spec_text}
+    return {
+        "input": {
+            "repo": pr_record["repo"],
+            "pr_id": pr_record["pr_id"],
+            "lang": pr_record["lang"],
+            "rtl_files": pr_record["rtl_files"],
+            "spec": spec_text,
+            "commit_id": pr_record["commit_id"],
+            "timestamp": pr_record["timestamp"],
+        },
+        "bug_info": [],
+        "aux": {
+            "merge_commit_sha": pr_record["merge_commit_sha"],
+            "pr_title": pr_record["pr_title"],
+            "pr_body": pr_record["pr_body"],
+            "issue_title": pr_record["issue_title"],
+            "issue_body": pr_record["issue_body"],
+            "commit_message": pr_record["commit_message"],
+            "fix_patch": pr_record["fix_patch"],
+            "fixed_rtl_code": materials["fixed_rtl_code"],
+            "selected_doc_paths": selected_docs,
+        },
+    }
 ```
+
+### 审查失败处理
+
+审查未通过时，不自动让 LLM 改写，而是将以下信息写入 `manual_review_queue.jsonl`：
+
+- PR 标识（repo、pr_id）
+- 审查结果（未通过的 check 和原因）
+- 生成的 spec 原文
+- fixed RTL 源码
+- PR title/body 和 fix_patch
+
+人工审查后决定修改 spec 重新进入 review，或丢弃该 PR。
 
 ### 生成Prompt（需要与3\.1\.2保持一致）
 
@@ -219,31 +266,21 @@ You are a senior RTL architect. Generate a design specification (Spec) for the m
 ### RTL Source
 {RTL Code}
 
-### Official Specification Snippets
+### Official Specification Documents
 {Official Spec}
 
-## Output Format
-Generate a Markdown spec with this exact structure:
-
-```
-# <module_name>
-## Overview
-[1-3 sentences describing module purpose and system role]
-
-## Functional Behavior
-- [behavioral assertion using must/shall/should]
-- ...
-
-## Interface Constraints (optional)
-[protocol requirements]
-```
+## Task
+Write a behavioral design specification (Spec) for this RTL module.
+The Spec should describe WHAT the module must do under various conditions, not HOW it is implemented.
+Use Markdown in a natural, free-form structure that best conveys the module's behavior.
 
 ## Rules
-1. Describe WHAT (correct behavior), not HOW (implementation).
-2. Do NOT mention signal names, line numbers, code structure, or fix methods.
-3. Use normative language: must, shall, should.
+1. Describe correct behavior (WHAT), not implementation details (HOW).
+2. Do NOT mention signal names, variable names, line numbers, code structure, fix methods, or test methods.
+3. Use normative language where appropriate: must, shall, should.
 4. Self-contained: an engineer unfamiliar with the project should understand what the module should do.
-5. Do NOT use: incorrectly, broken, fixed, bug, patched, repaired.
+5. Do NOT use words that imply bugs or fixes: incorrectly, broken, fixed, bug, patched, repaired.
+6. Keep the spec focused on observable behavior and functional requirements.
 ```
 
 ### 审查Prompt
@@ -262,16 +299,13 @@ You are a senior RTL verification engineer. Review the following Spec for qualit
 ### RTL Source
 {RTL Code}
 
-### Official Specification Snippets
-{Official Spec}
-
 ### Generated Specification
 ```markdown
 {generated spec}
 ```
 
 ## Checks (true / false)
-1. describes_correct_behavior: Does the spec use must/shall/should to describe correct behavior? No "bug/fixed/broken/incorrectly".
+1. describes_correct_behavior: Does the **generated specification** use must/shall/should to describe correct behavior? No "bug/fixed/broken/incorrectly".
 2. no_patch_leakage: Does the **generated specification** contain NO signal names, variable names, assign expressions, or line numbers from the patch?
 3. sufficient_for_diagnosis: Does the generated specification contain at least one behavioral assertion directly related to the functional area modified by the patch?
 
@@ -280,7 +314,7 @@ Output valid JSON only, no markdown fences:
 {"passed": true, "checks": {"describes_correct_behavior": true, "no_patch_leakage": true, "sufficient_for_diagnosis": true}, "reasoning": "one sentence summary"}
 ```
 
-# 输出字段构建@李林轩
+# 输出字段构建
 
 ## bug\_lineno 
 
@@ -294,9 +328,7 @@ This step produces a hunk shortlist for human root-cause review and annotation.
 
 ## Case
 Repository: {repo}
-PR ID: {pr_id}
 Language: {lang}
-Base Commit Before Fix: {commit_id}
 
 ## Evidence
 PR Title: {pr_title}
@@ -312,15 +344,15 @@ Commit Message:
 ## Buggy RTL Code Before Merge
 The following contains the full pre-merge source code of all files that contain diff hunks in this PR.
 
-{rtl_code}
+{rtl_code} //单文件
 
 ## Fix Patch Hunks
 The input fix_patch is already split into hunks with hunk_id.
 
 Expected format:
 [
-  "HUNK_1",
-  "HUNK_2"
+  {"HUNK_ID": "HUNK_CODE"},
+  {"HUNK_ID": "HUNK_CODE"}
 ]
 
 {fix_patch}
@@ -331,7 +363,6 @@ Output valid JSON only. Use hunk_id values from Fix Patch Hunks.
 {
   "candidate_root_cause_hunks": [
     {
-      "file_path": "...",
       "hunk_ids": [
         "HUNK_1",
         "HUNK_2"
@@ -341,7 +372,6 @@ Output valid JSON only. Use hunk_id values from Fix Patch Hunks.
   ],
   "filtered_non_root_cause_hunks": [
     {
-      "file_path": "...",
       "hunk_ids": [
         "HUNK_3",
         "HUNK_4"
@@ -355,7 +385,6 @@ Output valid JSON only. Use hunk_id values from Fix Patch Hunks.
 1. This step produces a hunk shortlist for human root-cause review and annotation.
 2. Be conservative: keep any hunk that may contain the root cause.
 3. Filter only hunks that are clearly formatting, comments, renaming, cleanup, tests, unrelated edits, or surrounding adaptation code.
-4. Every output item must include file_path so human annotators know which file the hunk ids belong to.
 ```
 
 ### ~~问题定义~~
@@ -388,17 +417,17 @@ Output valid JSON only. Use hunk_id values from Fix Patch Hunks.
 
 ~~RTL 文件过滤：仅保留 ~~~~`.sv`~~~~ ~~~~`.svh`~~~~ ~~~~`.v`~~~~ 文件，排除 ~~~~`/dv/`~~~~ ~~~~`/tb/`~~~~ ~~~~`/test/`~~~~ 等测试目录。~~
 
-#### ~~Hunk 解析~~
+#### ~~H~~unk 解析
 
-#### ~~hunk划分精度~~
+#### hunk划分精度
 
-~~`--granularity`~~~~ 参数控制 fix\_patch 的划分精度：~~
+`--granularity` 参数控制 fix\_patch 的划分精度：
 
-|~~粒度~~|~~划分方式~~|~~hunk 数~~|~~行号精度~~|~~迭代次数~~|~~适用场景~~|
+|粒度|划分方式|hunk 数|行号精度|迭代次数|适用场景|
 |---|---|---|---|---|---|
-|~~`coarse`~~|~~原样保留 fix\_patch 的 ~~~~`@@`~~~~ hunk~~|~~最少~~|~~\~150 行/hunk~~|~~最少~~|~~快速扫描~~|
-|~~`medium`~~|~~按连续 ~~~~`+`~~~~/~~~~`-`~~~~ 块分割大 hunk~~~~ ~~~~如何分割？最长连续修改~~|~~居中~~|~~\~10 行/hunk~~|~~居中~~|**~~默认推荐~~**|
-|~~`fine`~~|~~每个连续变更块独立~~|~~最多~~|~~\~3 行/hunk~~|~~最多~~|~~精确定位~~|
+|`coarse`|原样保留 fix\_patch 的 `@@` hunk|最少|\~150 行/hunk|最少|快速扫描|
+|`medium`|按连续 `+`/`-` 块分割大 hunk 如何分割？最长连续修改|居中|\~10 行/hunk|居中|**默认推荐**|
+|`fine`|每个连续变更块独立|最多|\~3 行/hunk|最多|精确定位|
 
 
 
@@ -607,29 +636,27 @@ Language: {lang}
 {spec_text}
 
 ## Confirmed Root-Cause Hunks and Code Blocks
-The following RC annotations provide hunk_id, file_path, and the corresponding root-cause code block for each confirmed hunk.
+The following RC annotations provide hunk_id and the corresponding root-cause code block for each confirmed hunk.
 
 Expected format:
 [
   {
     "hunk_id": "HUNK_1",
-    "file_path": "...",
     "root_cause_code": "..."
   },
   {
     "hunk_id": "HUNK_2",
-    "file_path": "...",
     "root_cause_code": "..."
   }
 ]
 
-Root Cause Code Hunks
 {root_cause_hunks}
 
 ## Buggy RTL Code Before Merge
 The following contains the full pre-merge source code of all files that contain diff hunks in this PR.
-
+<BEGIN of CODE>
 {rtl_code}
+<END of CODE>
 
 ## Evidence
 PR Title: {pr_title}
@@ -659,7 +686,6 @@ Output valid JSON only. Follow the same `bug_info` format as the output section.
   "bug_info": [[
     {
       "hunk_id": "HUNK_1",
-      "file_path": "...",
       "bug_type": {
         "level1": "...",
         "level2": "..."
@@ -669,7 +695,6 @@ Output valid JSON only. Follow the same `bug_info` format as the output section.
     },
     {
       "hunk_id": "HUNK_2",
-      "file_path": "...",
       "bug_type": {
         "level1": "...",
         "level2": "..."
@@ -682,7 +707,7 @@ Output valid JSON only. Follow the same `bug_info` format as the output section.
 
 ## Rules
 1. Each block in bug_info corresponds to one confirmed root-cause hunk.
-2. Copy hunk_id and file_path from the provided RC hunk annotation.
+2. Copy hunk_id from the provided RC hunk annotation.
 3. If there are multiple confirmed hunks in the same file, output one block for each hunk in the same inner list.
 4. Use only the allowed bug types and exact spelling.
 5. bug_desc should describe the trigger condition, observable failure, and root-cause scope when supported by evidence.
@@ -761,28 +786,4 @@ def validate_bug_type_regex(bug_type: dict) -> bool:
 1. Spec参考
 
     https://github\.com/hkust\-zhiyao/SpecLLM/tree/main
-
-2. XXXX
-
-|~~负责人~~|~~Repo~~|~~Link~~|~~简介~~|
-|---|---|---|---|
-|~~书琰~~|~~ibex~~|~~https://github\.com/lowRISC/ibex~~|~~小型、可参数化的 32\-bit RISC\-V CPU core，主要面向嵌入式控制场景。~~|
-||~~CVA6~~|~~https://github\.com/openhwgroup/cva6~~|~~可配置的 6 级流水 RISC\-V core，应用级配置可以运行 Linux。~~|
-|~~林轩~~|~~XiangShan~~|~~https://github\.com/OpenXiangShan/XiangShan~~|~~开源高性能 RISC\-V 处理器项目，复杂度和微架构规模更接近高性能 CPU。~~|
-||~~Rocket Chip~~|~~https://github\.com/chipsalliance/rocket\-chip~~|~~基于 Chisel/Scala 的 RISC\-V SoC 生成器，可生成 Rocket Core 及其 SoC 外围结构。~~|
-|~~子涵~~|~~Caliptra RTL~~|~~https://github\.com/chipsalliance/caliptra\-rtl~~|~~Caliptra Root of Trust IP 的 RTL 硬件设计仓库，偏安全根信任模块。~~|
-||~~opentitan~~|~~https://github\.com/lowRISC/opentitan~~|~~开源 silicon Root of Trust 项目，包含硬件、软件和安全 IP 的 monorepo。~~|
-
-
-
-|负责人|Repo|Link|简介|
-|---|---|---|---|
-|书琰|ibex|||
-|||||
-|林轩|CVA6|||
-|||||
-|子涵|Caliptra RTL|||
-|||||
-
-
 

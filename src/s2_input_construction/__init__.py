@@ -1,1 +1,1 @@
-# S2 input construction package
+"""RtlDebugBench S2: construct benchmark input packages from S1 candidates."""
